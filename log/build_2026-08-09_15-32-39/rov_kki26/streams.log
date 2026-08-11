@@ -1,0 +1,21 @@
+[1.035s] Invoking command in '/home/cakson/rov_kki26_ws/build/rov_kki26': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/cakson/rov_kki26_ws/build/rov_kki26/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/cakson/rov_kki26_ws/build/rov_kki26/build --no-deps symlink_data
+[1.450s] running develop
+[1.687s] running egg_info
+[1.711s] writing rov_kki26.egg-info/PKG-INFO
+[1.711s] writing dependency_links to rov_kki26.egg-info/dependency_links.txt
+[1.711s] writing entry points to rov_kki26.egg-info/entry_points.txt
+[1.712s] writing requirements to rov_kki26.egg-info/requires.txt
+[1.712s] writing top-level names to rov_kki26.egg-info/top_level.txt
+[1.764s] reading manifest file 'rov_kki26.egg-info/SOURCES.txt'
+[1.766s] writing manifest file 'rov_kki26.egg-info/SOURCES.txt'
+[1.792s] running build_ext
+[1.793s] Creating /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov-kki26.egg-link (link to .)
+[1.794s] Installing mavis_gamepad script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[1.794s] Installing qr_scanner script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[1.794s] Installing rov_dashboard script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[1.794s] Installing telemetry_receiver script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[1.794s] Installing video_receiver script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[1.795s] 
+[1.795s] Installed /home/cakson/rov_kki26_ws/build/rov_kki26
+[1.795s] running symlink_data
+[1.844s] Invoked command in '/home/cakson/rov_kki26_ws/build/rov_kki26' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/cakson/rov_kki26_ws/build/rov_kki26/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/cakson/rov_kki26_ws/build/rov_kki26/build --no-deps symlink_data

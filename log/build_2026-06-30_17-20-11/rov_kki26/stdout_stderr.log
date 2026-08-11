@@ -1,0 +1,25 @@
+running egg_info
+writing ../../build/rov_kki26/rov_kki26.egg-info/PKG-INFO
+writing dependency_links to ../../build/rov_kki26/rov_kki26.egg-info/dependency_links.txt
+writing entry points to ../../build/rov_kki26/rov_kki26.egg-info/entry_points.txt
+writing requirements to ../../build/rov_kki26/rov_kki26.egg-info/requires.txt
+writing top-level names to ../../build/rov_kki26/rov_kki26.egg-info/top_level.txt
+reading manifest file '../../build/rov_kki26/rov_kki26.egg-info/SOURCES.txt'
+writing manifest file '../../build/rov_kki26/rov_kki26.egg-info/SOURCES.txt'
+running build
+running build_py
+copying rov_kki26/qr_scanner_node.py -> /home/cakson/rov_kki26_ws/build/rov_kki26/build/lib/rov_kki26
+running install
+running install_lib
+copying /home/cakson/rov_kki26_ws/build/rov_kki26/build/lib/rov_kki26/qr_scanner_node.py -> /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26
+byte-compiling /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26/qr_scanner_node.py to qr_scanner_node.cpython-312.pyc
+running install_data
+running install_egg_info
+removing '/home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26-0.0.0-py3.12.egg-info' (and everything under it)
+Copying ../../build/rov_kki26/rov_kki26.egg-info to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26-0.0.0-py3.12.egg-info
+running install_scripts
+Installing qr_scanner script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+Installing rov_dashboard script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+Installing telemetry_receiver script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+Installing video_receiver script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+writing list of installed files to '/home/cakson/rov_kki26_ws/build/rov_kki26/install.log'

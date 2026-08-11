@@ -1,0 +1,36 @@
+[0.651s] Invoking command in '/home/cakson/rov_kki26_ws/src/rov_kki26': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/cakson/rov_kki26_ws/build/rov_kki26/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/rov_kki26 build --build-base /home/cakson/rov_kki26_ws/build/rov_kki26/build install --record /home/cakson/rov_kki26_ws/build/rov_kki26/install.log --single-version-externally-managed install_data
+[0.848s] running egg_info
+[0.859s] writing ../../build/rov_kki26/rov_kki26.egg-info/PKG-INFO
+[0.859s] writing dependency_links to ../../build/rov_kki26/rov_kki26.egg-info/dependency_links.txt
+[0.860s] writing entry points to ../../build/rov_kki26/rov_kki26.egg-info/entry_points.txt
+[0.860s] writing requirements to ../../build/rov_kki26/rov_kki26.egg-info/requires.txt
+[0.860s] writing top-level names to ../../build/rov_kki26/rov_kki26.egg-info/top_level.txt
+[0.882s] reading manifest file '../../build/rov_kki26/rov_kki26.egg-info/SOURCES.txt'
+[0.883s] writing manifest file '../../build/rov_kki26/rov_kki26.egg-info/SOURCES.txt'
+[0.883s] running build
+[0.883s] running build_py
+[0.883s] copying rov_kki26/video_receiver_node.py -> /home/cakson/rov_kki26_ws/build/rov_kki26/build/lib/rov_kki26
+[0.884s] copying rov_kki26/telemetry_receiver_node.py -> /home/cakson/rov_kki26_ws/build/rov_kki26/build/lib/rov_kki26
+[0.884s] copying rov_kki26/qr_scanner_node.py -> /home/cakson/rov_kki26_ws/build/rov_kki26/build/lib/rov_kki26
+[0.884s] copying rov_kki26/rov_dashboard_node.py -> /home/cakson/rov_kki26_ws/build/rov_kki26/build/lib/rov_kki26
+[0.884s] running install
+[0.888s] running install_lib
+[0.899s] copying /home/cakson/rov_kki26_ws/build/rov_kki26/build/lib/rov_kki26/video_receiver_node.py -> /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26
+[0.900s] copying /home/cakson/rov_kki26_ws/build/rov_kki26/build/lib/rov_kki26/telemetry_receiver_node.py -> /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26
+[0.900s] copying /home/cakson/rov_kki26_ws/build/rov_kki26/build/lib/rov_kki26/qr_scanner_node.py -> /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26
+[0.900s] copying /home/cakson/rov_kki26_ws/build/rov_kki26/build/lib/rov_kki26/rov_dashboard_node.py -> /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26
+[0.900s] byte-compiling /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26/video_receiver_node.py to video_receiver_node.cpython-312.pyc
+[0.901s] byte-compiling /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26/telemetry_receiver_node.py to telemetry_receiver_node.cpython-312.pyc
+[0.902s] byte-compiling /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26/qr_scanner_node.py to qr_scanner_node.cpython-312.pyc
+[0.902s] byte-compiling /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26/rov_dashboard_node.py to rov_dashboard_node.cpython-312.pyc
+[0.905s] running install_data
+[0.905s] running install_egg_info
+[0.917s] removing '/home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26-0.0.0-py3.12.egg-info' (and everything under it)
+[0.917s] Copying ../../build/rov_kki26/rov_kki26.egg-info to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26-0.0.0-py3.12.egg-info
+[0.918s] running install_scripts
+[1.021s] Installing qr_scanner script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[1.021s] Installing rov_dashboard script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[1.021s] Installing telemetry_receiver script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[1.021s] Installing video_receiver script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[1.022s] writing list of installed files to '/home/cakson/rov_kki26_ws/build/rov_kki26/install.log'
+[1.048s] Invoked command in '/home/cakson/rov_kki26_ws/src/rov_kki26' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/cakson/rov_kki26_ws/build/rov_kki26/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/rov_kki26 build --build-base /home/cakson/rov_kki26_ws/build/rov_kki26/build install --record /home/cakson/rov_kki26_ws/build/rov_kki26/install.log --single-version-externally-managed install_data

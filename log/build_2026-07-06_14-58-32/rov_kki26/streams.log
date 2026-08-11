@@ -1,0 +1,27 @@
+[0.574s] Invoking command in '/home/cakson/rov_kki26_ws/src/rov_kki26': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/cakson/rov_kki26_ws/build/rov_kki26/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/rov_kki26 build --build-base /home/cakson/rov_kki26_ws/build/rov_kki26/build install --record /home/cakson/rov_kki26_ws/build/rov_kki26/install.log --single-version-externally-managed install_data
+[0.748s] running egg_info
+[0.759s] writing ../../build/rov_kki26/rov_kki26.egg-info/PKG-INFO
+[0.759s] writing dependency_links to ../../build/rov_kki26/rov_kki26.egg-info/dependency_links.txt
+[0.759s] writing entry points to ../../build/rov_kki26/rov_kki26.egg-info/entry_points.txt
+[0.759s] writing requirements to ../../build/rov_kki26/rov_kki26.egg-info/requires.txt
+[0.759s] writing top-level names to ../../build/rov_kki26/rov_kki26.egg-info/top_level.txt
+[0.782s] reading manifest file '../../build/rov_kki26/rov_kki26.egg-info/SOURCES.txt'
+[0.783s] writing manifest file '../../build/rov_kki26/rov_kki26.egg-info/SOURCES.txt'
+[0.783s] running build
+[0.783s] running build_py
+[0.783s] copying rov_kki26/rov_dashboard_node.py -> /home/cakson/rov_kki26_ws/build/rov_kki26/build/lib/rov_kki26
+[0.783s] running install
+[0.788s] running install_lib
+[0.799s] copying /home/cakson/rov_kki26_ws/build/rov_kki26/build/lib/rov_kki26/rov_dashboard_node.py -> /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26
+[0.800s] byte-compiling /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26/rov_dashboard_node.py to rov_dashboard_node.cpython-312.pyc
+[0.804s] running install_data
+[0.804s] running install_egg_info
+[0.816s] removing '/home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26-0.0.0-py3.12.egg-info' (and everything under it)
+[0.816s] Copying ../../build/rov_kki26/rov_kki26.egg-info to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov_kki26-0.0.0-py3.12.egg-info
+[0.817s] running install_scripts
+[0.898s] Installing qr_scanner script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[0.899s] Installing rov_dashboard script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[0.899s] Installing telemetry_receiver script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[0.899s] Installing video_receiver script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+[0.899s] writing list of installed files to '/home/cakson/rov_kki26_ws/build/rov_kki26/install.log'
+[0.923s] Invoked command in '/home/cakson/rov_kki26_ws/src/rov_kki26' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/cakson/rov_kki26_ws/build/rov_kki26/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/rov_kki26 build --build-base /home/cakson/rov_kki26_ws/build/rov_kki26/build install --record /home/cakson/rov_kki26_ws/build/rov_kki26/install.log --single-version-externally-managed install_data

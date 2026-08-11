@@ -1,0 +1,18 @@
+running develop
+running egg_info
+writing rov_kki26.egg-info/PKG-INFO
+writing dependency_links to rov_kki26.egg-info/dependency_links.txt
+writing entry points to rov_kki26.egg-info/entry_points.txt
+writing requirements to rov_kki26.egg-info/requires.txt
+writing top-level names to rov_kki26.egg-info/top_level.txt
+reading manifest file 'rov_kki26.egg-info/SOURCES.txt'
+writing manifest file 'rov_kki26.egg-info/SOURCES.txt'
+running build_ext
+Creating /home/cakson/rov_kki26_ws/install/rov_kki26/lib/python3.12/site-packages/rov-kki26.egg-link (link to .)
+Installing qr_scanner script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+Installing rov_dashboard script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+Installing telemetry_receiver script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+Installing video_receiver script to /home/cakson/rov_kki26_ws/install/rov_kki26/lib/rov_kki26
+
+Installed /home/cakson/rov_kki26_ws/build/rov_kki26
+running symlink_data

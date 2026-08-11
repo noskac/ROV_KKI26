@@ -1,0 +1,7 @@
+[console_scripts]
+data_logger = rov_kki26.data_logger_node:main
+mavis_gamepad = rov_kki26.mavis_gamepad_node:main
+qr_scanner = rov_kki26.qr_scanner_node:main
+rov_dashboard = rov_kki26.rov_dashboard_node:main
+telemetry_receiver = rov_kki26.telemetry_receiver_node:main
+video_receiver = rov_kki26.video_receiver_node:main

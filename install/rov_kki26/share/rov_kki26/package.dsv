@@ -1,0 +1,9 @@
+source;share/rov_kki26/hook/pythonpath.ps1
+source;share/rov_kki26/hook/pythonpath.dsv
+source;share/rov_kki26/hook/pythonpath.sh
+source;share/rov_kki26/hook/ament_prefix_path.ps1
+source;share/rov_kki26/hook/ament_prefix_path.dsv
+source;share/rov_kki26/hook/ament_prefix_path.sh
+source;../../build/rov_kki26/share/rov_kki26/hook/pythonpath_develop.ps1
+source;../../build/rov_kki26/share/rov_kki26/hook/pythonpath_develop.dsv
+source;../../build/rov_kki26/share/rov_kki26/hook/pythonpath_develop.sh
