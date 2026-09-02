@@ -15,7 +15,7 @@ setup(
     zip_safe=True,
     maintainer='cakson',
     maintainer_email='andaruwicak04@gmail.com',
-    description='TODO: Package description',
+    description='Sistem Ground Control Station ROV MAIVS EVO — KKI 2026',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
@@ -26,6 +26,12 @@ setup(
             'qr_scanner = rov_kki26.qr_scanner_node:main',
             'mavis_gamepad = rov_kki26.mavis_gamepad_node:main',
             'data_logger = rov_kki26.data_logger_node:main',
+            # 'video_recorder' DIHAPUS — perekaman video sekarang ada di dalam
+            # video_receiver_node.py. Node perekam terpisah menambah proses
+            # subscriber ketiga ke topic image_raw (~75 MB/detik per proses),
+            # yang membuat frame besar gagal terkirim lewat DDS dan video di
+            # GUI hilang total. Penjelasan lengkap ada di docstring
+            # video_receiver_node.py.
         ],
     },
 )

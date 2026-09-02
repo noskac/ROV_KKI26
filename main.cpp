@@ -18,6 +18,38 @@
 #define PWM_NEUTRAL       1500
 #define SERIAL_TIMEOUT_MS  500   // reset ke netral jika putus dari Jetson
 
+// ── DEPTH HOLD & IMU STABILIZATION ───────────────────────────
+// Nilai gain berikut adalah default konservatif (aman untuk uji awal).
+// WAJIB dituning ulang setelah hardware terpasang di robot.
+// ============================================================
+// DEPTH HOLD PID
+// ============================================================
+const float DEPTH_KP = 150.0f;
+const float DEPTH_KI = 5.0f;
+const float DEPTH_KD = 8.0f;
+
+const float ANGLE_KP = 5.0f;
+const float ANGLE_KI = 0.1f;
+const float ANGLE_KD = 1.0f;
+
+const int   MAX_DEPTH_CORRECTION = 200;  // batas offset PWM dari depth-hold
+const int   MAX_ANGLE_CORRECTION = 200;  // batas offset PWM dari stabilisasi pitch/roll
+const int   HEAVE_DEADBAND       = 30;   // dipertahankan untuk kompatibilitas
+
+// Deadband kedalaman agar PID tidak terus memburu nilai yang sangat dekat
+// dengan setpoint. 0.015 m = ±1.5 cm.
+const float DEPTH_DEADBAND = 0.015f;
+
+// Balik menjadi -1.0f bila arah koreksi depth ternyata terbalik
+// setelah pengujian hardware.
+const float DEPTH_OUTPUT_SIGN = 1.0f;
+
+// Set false untuk menonaktifkan sementara stabilisasi pitch/roll (mis. saat gain
+// masih terlalu kasar / belum dituning). Depth-hold TIDAK terpengaruh oleh flag ini.
+// Koreksi tetap dihitung & ditampilkan di telemetry untuk referensi tuning,
+// hanya tidak disalurkan ke mixing thruster.
+const bool ENABLE_IMU_STABILIZATION = false;
+
 const uint8_t PIN_DKIRI    = 11;  //B2
 const uint8_t PIN_DKANAN   = 10; //A2
 const uint8_t PIN_BKIRI    = 12; //A3
@@ -38,7 +70,9 @@ struct AutoCommand {
     int heave   = PWM_NEUTRAL; 
     int tiltArm = 180;         // FIX 360: Diubah dari 0 ke 180 (Tengah)
     int gripper = 180;         // FIX 360: Diubah dari 90 ke 180 (Tengah)
-    int mode    = 1;           
+    int mode    = 1;
+    int depthHold = 0;         // 1 = depth-hold aktif (dikirim GCS via toggle B0)
+    int relevel   = 0;         // 1 = perintah re-zero setpoint IMU (momentari, B3)
 };
 
 struct ThrusterOutput {
@@ -90,6 +124,22 @@ float twoKp = 1.0f;
 float twoKi = 0.0f;
 float q0 = 1, q1 = 0, q2 = 0, q3 = 0;
 float integralFBx = 0, integralFBy = 0, integralFBz = 0;
+
+// ── Depth Hold State ─────────────────────────────────────────
+bool  prevDepthHoldFlag = false;
+float depthSetpoint     = 0;
+float depthIntegral     = 0;
+float lastDepthError    = 0;
+float depthError        = 0;
+float depthCorrection   = 0;
+
+// ── IMU Stabilization State ──────────────────────────────────
+bool  prevRelevelFlag = false;
+float pitchSetpoint   = 0;   // di-set saat boot & saat relevel (B3)
+float rollSetpoint    = 0;
+float pitchIntegral   = 0, rollIntegral = 0;
+float lastPitchError  = 0, lastRollError = 0;
+bool  attitudeSetpointInit = false; // untuk auto-set setpoint pertama kali saat data IMU pertama valid
 
 // ════════════════════════════════════════════════════════════
 //  MAHONY AHRS
@@ -151,13 +201,79 @@ void MahonyUpdate(float gx, float gy, float gz, float ax, float ay, float az, fl
 }
 
 // ════════════════════════════════════════════════════════════
+//  PID GENERIK (dengan anti-windup sederhana)
+// ════════════════════════════════════════════════════════════
+float computePID(float error, float &integral, float &lastError,
+                  float kp, float ki, float kd, float dt, float maxOutput) {
+    integral += error * dt;
+    integral = constrain(integral, -maxOutput, maxOutput); // anti-windup
+
+    float derivative = (dt > 0) ? (error - lastError) / dt : 0;
+    lastError = error;
+
+    float output = (kp * error) + (ki * integral) + (kd * derivative);
+    return constrain(output, -maxOutput, maxOutput);
+}
+
+// ============================================================
+// DEPTH HOLD PID
+// ============================================================
+float computeDepthPID(
+    float depth,
+    float setpoint,
+    float &integral,
+    float &lastError,
+    float dt
+) {
+    if (dt <= 0.0f) {
+        return 0.0f;
+    }
+
+    // Positif jika robot lebih dangkal dari target.
+    float error = setpoint - depth;
+
+    // Deadband: ketika sudah sangat dekat dengan target, hentikan koreksi
+    // dan lepaskan sebagian integral untuk mengurangi overshoot.
+    if (fabs(error) <= DEPTH_DEADBAND) {
+        integral *= 0.95f;
+        lastError = error;
+        return 0.0f;
+    }
+
+    integral += error * dt;
+    integral = constrain(
+        integral,
+        -((float)MAX_DEPTH_CORRECTION),
+        ((float)MAX_DEPTH_CORRECTION)
+    );
+
+    float derivative = (error - lastError) / dt;
+    lastError = error;
+
+    float output =
+        (DEPTH_KP * error) +
+        (DEPTH_KI * integral) +
+        (DEPTH_KD * derivative);
+
+    output *= DEPTH_OUTPUT_SIGN;
+
+    return constrain(
+        output,
+        -((float)MAX_DEPTH_CORRECTION),
+        ((float)MAX_DEPTH_CORRECTION)
+    );
+}
+
+// ════════════════════════════════════════════════════════════
 //  MIXING KINEMATICS
 // ════════════════════════════════════════════════════════════
-ThrusterOutput mixing(const AutoCommand& cmd) {
+// heaveCmd: nilai heave EFEKTIF (sudah melalui logika depth-hold, bukan cmd.heave mentah)
+// pitchCorr & rollCorr: offset PWM dari stabilisasi IMU (background, selalu aktif)
+ThrusterOutput mixing(const AutoCommand& cmd, int heaveCmd, float pitchCorr, float rollCorr) {
     ThrusterOutput out;
     int surge = constrain(cmd.surge - PWM_NEUTRAL, -400, 400);
     int yaw   = constrain(cmd.yaw   - PWM_NEUTRAL, -400, 400);
-    int heave = constrain(cmd.heave - PWM_NEUTRAL, -400, 400);
+    int heave = constrain(heaveCmd  - PWM_NEUTRAL, -400, 400);
     
     // --- KOREKSI ROTASI FISIK 90 DERAJAT ---
     // Joystick Maju/Mundur (cmd.tilt) dialihkan menjadi perintah Roll, 
@@ -182,10 +298,20 @@ ThrusterOutput mixing(const AutoCommand& cmd) {
     out.TKANAN = constrain(PWM_NEUTRAL + surge + yaw, PWM_MIN, PWM_MAX);
     
     // Thruster Vertikal
-    out.DKIRI  = constrain(PWM_NEUTRAL - heave + roll_kiri  + tilt_depan, PWM_MIN, PWM_MAX);
-    out.DKANAN = constrain(PWM_NEUTRAL - heave - roll_kanan + tilt_depan, PWM_MIN, PWM_MAX);
-    out.BKIRI  = constrain(PWM_NEUTRAL - heave + roll_kiri  - tilt_belakang, PWM_MIN, PWM_MAX);
-    out.BKANAN = constrain(PWM_NEUTRAL - heave - roll_kanan - tilt_belakang, PWM_MIN, PWM_MAX);
+    // DKIRI/DKANAN = pasangan depan, BKIRI/BKANAN = pasangan belakang
+    // DKIRI/BKIRI  = pasangan kiri,  DKANAN/BKANAN = pasangan kanan
+    // pitchCorr: + menambah dorongan depan & mengurangi belakang (mengoreksi kemiringan depan-belakang)
+    // rollCorr : + menambah dorongan kiri & mengurangi kanan (mengoreksi kemiringan kiri-kanan)
+    // CATATAN: tanda (+/-) korkeksi di atas adalah asumsi awal berdasarkan konvensi Mahony
+    // (pitch/roll dari atan2 & asin di loop()). WAJIB diverifikasi saat uji hardware pertama;
+    // jika arah koreksi terbalik (robot makin miring, bukan makin rata), balik tanda pitchCorr/rollCorr di sini.
+    int pc = (int)pitchCorr;
+    int rc = (int)rollCorr;
+
+    out.DKIRI  = constrain(PWM_NEUTRAL - heave + roll_kiri  + tilt_depan    + rc + pc, PWM_MIN, PWM_MAX);
+    out.DKANAN = constrain(PWM_NEUTRAL - heave - roll_kanan + tilt_depan    - rc + pc, PWM_MIN, PWM_MAX);
+    out.BKIRI  = constrain(PWM_NEUTRAL - heave + roll_kiri  - tilt_belakang + rc - pc, PWM_MIN, PWM_MAX);
+    out.BKANAN = constrain(PWM_NEUTRAL - heave - roll_kanan - tilt_belakang - rc - pc, PWM_MIN, PWM_MAX);
     
     return out;
 }
@@ -248,6 +374,10 @@ void readCommand() {
             if (token) autoCmd.gripper = constrain(atoi(token), 0, 360); // FIX 360: max 360
             token = strtok(NULL, ",");
             if (token) autoCmd.mode = atoi(token);
+            token = strtok(NULL, ",");
+            if (token) autoCmd.depthHold = atoi(token);
+            token = strtok(NULL, ",");
+            if (token) autoCmd.relevel = atoi(token);
 
             // --- LOGIKA ARMING ---
             if (autoCmd.mode == 1 || autoCmd.mode == 2) {
@@ -272,15 +402,15 @@ void setup() {
     pinMode(PIN_RELAY, OUTPUT);
     digitalWrite(PIN_RELAY, LOW); 
 
-    tDKIRI.attach(PIN_DKIRI, false);
-    tDKANAN.attach(PIN_DKANAN, true);
+    tDKIRI.attach(PIN_DKIRI, true);
+    tDKANAN.attach(PIN_DKANAN, false);
     tBKIRI.attach(PIN_BKIRI, false);
-    tBKANAN.attach(PIN_BKANAN, true);
+    tBKANAN.attach(PIN_BKANAN, false);
     tTKIRI.attach(PIN_TKIRI, true);
     tTKANAN.attach(PIN_TKANAN, false);
 
-    servoTiltArm.attach(PIN_TILT_ARM);
-    servoGripper.attach(PIN_GRIPPER);
+    servoTiltArm.attach(PIN_TILT_ARM, 500, 2500);
+    servoGripper.attach(PIN_GRIPPER,  500, 2500);
     
     // FIX 360: Set posisi awal ke titik tengah dengan writeMicroseconds
     servoTiltArm.writeMicroseconds(map(autoCmd.tiltArm, 0, 360, 500, 2500));
@@ -344,6 +474,13 @@ void loop() {
             autoCmd = AutoCommand(); 
             autoCmd.tiltArm = lastTiltArm; 
             autoCmd.gripper = lastGripper;
+
+            // Reset Depth Hold saat komunikasi putus.
+            prevDepthHoldFlag = false;
+            depthIntegral = 0.0f;
+            lastDepthError = 0.0f;
+            depthError = 0.0f;
+            depthCorrection = 0.0f;
             
             // --- LOGIKA ARMING ---
             if (systemArmed) {
@@ -353,15 +490,115 @@ void loop() {
             }
         }
 
+        // ── Setpoint IMU Awal (Auto-Zero saat Boot) ──
+        if (!attitudeSetpointInit) {
+            pitchSetpoint = pitch;
+            rollSetpoint  = roll;
+            attitudeSetpointInit = true;
+        }
+
+        // ── Relevel (B3): re-zero setpoint pitch/roll ──
+        bool relevelEdge = (autoCmd.relevel && !prevRelevelFlag);
+        if (relevelEdge) {
+            pitchSetpoint  = pitch;
+            rollSetpoint   = roll;
+            pitchIntegral  = 0; rollIntegral = 0;
+            lastPitchError = 0; lastRollError = 0;
+        }
+        prevRelevelFlag = autoCmd.relevel;
+
+        // ============================================================
+        // DEPTH HOLD B0
+        // ============================================================
+        // B0 OFF : heave manual.
+        // B0 ON  : lock depth saat B0 ditekan, lalu PID mempertahankan depth.
+        // B0 OFF : PID di-reset dan kembali ke manual.
+
+        bool depthHoldON = (autoCmd.depthHold && autoCmd.mode != 3);
+
+        depthError = 0.0f;
+        depthCorrection = 0.0f;
+
+        // Rising edge: B0 baru ON -> simpan depth sekarang sebagai setpoint.
+        bool depthHoldRisingEdge = depthHoldON && !prevDepthHoldFlag;
+        if (depthHoldRisingEdge) {
+            depthSetpoint = depth;
+            depthIntegral = 0.0f;
+            lastDepthError = 0.0f;
+
+            Serial.print("DEPTH HOLD ON | SETPOINT = ");
+            Serial.println(depthSetpoint, 3);
+        }
+
+        // Falling edge: B0 baru OFF -> reset PID.
+        bool depthHoldFallingEdge = !depthHoldON && prevDepthHoldFlag;
+        if (depthHoldFallingEdge) {
+            depthIntegral = 0.0f;
+            lastDepthError = 0.0f;
+            depthError = 0.0f;
+            depthCorrection = 0.0f;
+
+            Serial.println("DEPTH HOLD OFF");
+        }
+
+        prevDepthHoldFlag = depthHoldON;
+
+        // Heave efektif yang benar-benar masuk ke mixing.
+        int effectiveHeave = autoCmd.heave;
+
+        if (depthHoldON) {
+            depthError = depthSetpoint - depth;
+
+            depthCorrection = computeDepthPID(
+                depth,
+                depthSetpoint,
+                depthIntegral,
+                lastDepthError,
+                dt
+            );
+
+            effectiveHeave = constrain(
+                PWM_NEUTRAL + (int)depthCorrection,
+                PWM_MIN,
+                PWM_MAX
+            );
+        }
+
+        // ── Stabilisasi IMU (Pitch/Roll) — background, selalu aktif, hanya utk 4 thruster vertikal ──
+        float pitchError = pitchSetpoint - pitch;
+        float rollError  = rollSetpoint  - roll;
+        float pitchCorrection = computePID(pitchError, pitchIntegral, lastPitchError,
+                                             ANGLE_KP, ANGLE_KI, ANGLE_KD, dt, MAX_ANGLE_CORRECTION);
+        float rollCorrection  = computePID(rollError,  rollIntegral,  lastRollError,
+                                             ANGLE_KP, ANGLE_KI, ANGLE_KD, dt, MAX_ANGLE_CORRECTION);
+        if (autoCmd.mode == 3) {
+            // Emergency: jangan berikan koreksi apapun
+            pitchCorrection = 0;
+            rollCorrection  = 0;
+        }
+        // Stabilisasi dinonaktifkan sementara jika ENABLE_IMU_STABILIZATION = false —
+        // koreksi tetap dihitung & di-print untuk referensi tuning, tapi tidak
+        // disalurkan ke mixing thruster.
+        float mixingPitchCorr = ENABLE_IMU_STABILIZATION ? pitchCorrection : 0.0f;
+        float mixingRollCorr  = ENABLE_IMU_STABILIZATION ? rollCorrection  : 0.0f;
+
         // ── Execute Motors ──
-        ThrusterOutput out = mixing(autoCmd);
+        ThrusterOutput out = mixing(autoCmd, effectiveHeave, mixingPitchCorr, mixingRollCorr);
         applyOutput(out, autoCmd);
 
         // ── Telemetry Out ──
         Serial.print("P:");  Serial.print(pitch, 1);
         Serial.print(" R:"); Serial.print(roll,  1);
         Serial.print(" Y:"); Serial.print(yaw,   1);
-        Serial.print(" D:"); Serial.println(depth, 3);
+        Serial.print(" D:"); Serial.print(depth, 3);
+        Serial.print(" DH:"); Serial.print(autoCmd.depthHold);
+        Serial.print(" SPD:"); Serial.print(depthSetpoint, 3);
+        Serial.print(" ERR:"); Serial.print(depthError, 3);
+        Serial.print(" CORR:"); Serial.print(depthCorrection, 1);
+        Serial.print(" HEFF:"); Serial.print(effectiveHeave);
+        Serial.print(" IMU_STAB:"); Serial.print(ENABLE_IMU_STABILIZATION ? 1 : 0);
+        Serial.print(" PC_raw:"); Serial.print(pitchCorrection, 1);
+        Serial.print(" RC_raw:"); Serial.println(rollCorrection, 1);
 
         Serial.print("CMD S:");     Serial.print(autoCmd.surge);
         Serial.print(" Y:");        Serial.print(autoCmd.yaw);
@@ -369,7 +606,10 @@ void loop() {
         Serial.print(" R:");        Serial.print(autoCmd.roll);
         Serial.print(" T:");        Serial.print(autoCmd.tilt);
         Serial.print(" TiltArm:");  Serial.print(autoCmd.tiltArm);
-        Serial.print(" Gripper:");  Serial.println(autoCmd.gripper);
+        Serial.print(" Gripper:");  Serial.print(autoCmd.gripper);
+        Serial.print(" Mode:");     Serial.print(autoCmd.mode);
+        Serial.print(" DH_raw:");   Serial.print(autoCmd.depthHold);
+        Serial.print(" RL_raw:");   Serial.println(autoCmd.relevel);
 
         Serial.print("PWM DKIRI:"); Serial.print(out.DKIRI);
         Serial.print(" DKANAN:");   Serial.print(out.DKANAN);

@@ -80,7 +80,8 @@ while True:
         # 2. Jika ini adalah data normal dari Gamepad/Keyboard
         else:
             parts = command_str.split(',')
-            if len(parts) >= 8:
+            # Format baru (10 field): s,y,r,t,heave,tiltArm,gripper,mode,depth_hold,relevel
+            if len(parts) >= 10:
                 try:
                     gamepad_mode = int(parts[7])
                     if gui_emergency_lock:
@@ -96,10 +97,14 @@ while True:
 
                 if (current_time - last_teensy_write_time) >= TEENSY_WRITE_INTERVAL:
                     # KUNCI GANDA: Jika Mode 3, paksa thruster 1500 di Jetson & kirim Mode 3 ke Teensy
+                    # depth_hold & relevel dipaksa 0 saat emergency demi keamanan.
                     if active_mode == 3:
-                        teensy_cmd = f"M:1500,1500,1500,1500,1500,90,90,3\n"
+                        teensy_cmd = f"M:1500,1500,1500,1500,1500,90,90,3,0,0\n"
                     else:
-                        teensy_cmd = f"M:{parts[0]},{parts[1]},{parts[2]},{parts[3]},{parts[4]},{parts[5]},{parts[6]},{active_mode}\n"
+                        teensy_cmd = (
+                            f"M:{parts[0]},{parts[1]},{parts[2]},{parts[3]},{parts[4]},"
+                            f"{parts[5]},{parts[6]},{active_mode},{parts[8]},{parts[9]}\n"
+                        )
                     
                     ser.write(teensy_cmd.encode('utf-8'))
                     ser.flush()
@@ -107,7 +112,7 @@ while True:
 
     # 3. WATCHDOG FAILSAFE
     if (current_time - last_command_time) > WATCHDOG_TIMEOUT and not watchdog_triggered:
-        ser.write(b'M:1500,1500,1500,1500,1500,90,90,3\n') # Anggap terputus sebagai darurat (Mode 3)
+        ser.write(b'M:1500,1500,1500,1500,1500,90,90,3,0,0\n') # Anggap terputus sebagai darurat (Mode 3)
         ser.flush()
         watchdog_triggered = True
 
