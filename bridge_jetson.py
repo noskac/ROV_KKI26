@@ -131,8 +131,11 @@ while True:
                 
                 # Tembakkan ke GCS (TAMBAHKAN CMD DI SINI!)
                 if line.startswith("P:") or line.startswith("PWM") or line.startswith("CMD"):
-                    sock_send.sendto(line.encode('utf-8'), (GCS_IP, TELEMETRY_PORT))
-    except Exception: 
+                    try:
+                        sock_send.sendto(line.encode('utf-8'), (GCS_IP, TELEMETRY_PORT))
+                    except OSError:
+                        pass
+    except Exception:
         pass
 
     # 5. KIRIM STATUS MODE KE GCS
@@ -142,7 +145,10 @@ while True:
         elif active_mode == 2: status_mode = "DEPTH LOCK"   # <--- UBAH BAGIAN INI
         else: status_mode = "MANUAL (Remote)"
                 
-        sock_send.sendto(f"MODE:{status_mode}".encode('utf-8'), (GCS_IP, TELEMETRY_PORT))
+        try:
+            sock_send.sendto(f"MODE:{status_mode}".encode('utf-8'), (GCS_IP, TELEMETRY_PORT))
+        except OSError:
+            pass
         last_mode_send_time = current_time
 
     time.sleep(0.001)
