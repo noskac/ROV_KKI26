@@ -32,7 +32,7 @@ gst-launch-1.0 -v v4l2src device=/dev/video0 ! \
   image/jpeg,width=1280,height=720,framerate=30/1 ! \
   jpegdec ! video/x-raw ! \
   nvvidconv ! video/x-raw\(memory:NVMM\),width=864,height=486,format=NV12 ! \
-  nvv4l2h264enc bitrate=2000000 insert-sps-pps=true iframeinterval=15 control-rate=1 preset-level=1 maxperf-enable=1 ! \
+  nvv4l2h264enc bitrate=4000000 insert-sps-pps=true iframeinterval=15 control-rate=1 preset-level=1 maxperf-enable=1 ! \
   h264parse ! rtph264pay config-interval=1 pt=96 ! \
   udpsink host=$IP_GCS port=5000 sync=false async=false &
 
@@ -41,7 +41,7 @@ gst-launch-1.0 -v v4l2src device=/dev/video1 ! \
   image/jpeg,width=1280,height=720,framerate=30/1 ! \
   jpegdec ! video/x-raw ! \
   nvvidconv ! video/x-raw\(memory:NVMM\),width=864,height=486,format=NV12 ! \
-  nvv4l2h264enc bitrate=2000000 insert-sps-pps=true iframeinterval=15 control-rate=1 preset-level=1 maxperf-enable=1 ! \
+  nvv4l2h264enc bitrate=4000000 insert-sps-pps=true iframeinterval=15 control-rate=1 preset-level=1 maxperf-enable=1 ! \
   h264parse ! rtph264pay config-interval=1 pt=96 ! \
   udpsink host=$IP_GCS port=5001 sync=false async=false &
 

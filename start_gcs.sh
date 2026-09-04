@@ -97,8 +97,12 @@ fi
 sleep 2
 
 # 2. GUI Dashboard
+# __NV_PRIME_RENDER_OFFLOAD/__GLX_VENDOR_LIBRARY_NAME: paksa render 3D (VTK/pyvista)
+# pakai GPU NVIDIA diskrit, bukan iGPU Intel — di laptop hybrid, iGPU yang lebih lemah
+# sempat bikin render 3D tersendat dan menyeret video kamera ikut patah-patah karena
+# keduanya diproses di thread Qt utama yang sama.
 echo "-> Menyalakan GUI Dashboard..."
-gnome-terminal --title="ROV Dashboard" -- bash -c "source /opt/ros/jazzy/setup.bash; cd $WS; source install/setup.bash; ros2 run rov_kki26 rov_dashboard; exec bash"
+gnome-terminal --title="ROV Dashboard" -- bash -c "source /opt/ros/jazzy/setup.bash; cd $WS; source install/setup.bash; __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia ros2 run rov_kki26 rov_dashboard; exec bash"
 
 # 3. QR Scanner
 echo "-> Menyalakan QR..."

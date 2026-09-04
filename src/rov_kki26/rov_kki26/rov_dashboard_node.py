@@ -178,7 +178,11 @@ class MainWindow(QMainWindow):
 
         self.render_timer = QTimer(self)
         self.render_timer.timeout.connect(self.update_3d_render)
-        self.render_timer.start(33)
+        # 20 Hz, bukan 30 Hz — render VTK jalan di thread Qt yang sama dengan
+        # update_cam1/update_cam2, jadi tiap tick di sini menunda gambar kamera.
+        # Model orientasi 3D tidak perlu se-halus video; menurunkan rate-nya
+        # mengurangi kontensi tanpa terasa "patah" di panel 3D-nya sendiri.
+        self.render_timer.start(50)
 
         self.ros_worker = Ros2Worker()
         self.connect_signals()
