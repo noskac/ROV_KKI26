@@ -1,0 +1,13 @@
+# colcon build artifacts
+build/
+install/
+log/
+
+# runtime output
+logs/
+recordings/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/

@@ -11,6 +11,7 @@
 #include <Adafruit_HMC5883_U.h>
 #include <MS5837.h>
 #include <Servo.h>
+#include <EEPROM.h>
 
 // ── PWM & SERVO ──────────────────────────────────────────────
 #define PWM_MIN           1100
@@ -57,9 +58,14 @@ const uint8_t PIN_BKANAN   = 24;  //B3
 const uint8_t PIN_TKIRI    = 8; //A1
 const uint8_t PIN_TKANAN   = 9;  //B1 
 
-const uint8_t PIN_RELAY    = 23; 
-const uint8_t PIN_TILT_ARM = 14; 
+const uint8_t PIN_RELAY    = 23;
+const uint8_t PIN_TILT_ARM = 14;
 const uint8_t PIN_GRIPPER  = 15;
+
+// ── EEPROM: simpan posisi servo terakhir agar tidak "reset ke tengah" tiap boot ──
+const int EEPROM_ADDR_TILT_ARM = 0;
+const int EEPROM_ADDR_GRIPPER  = EEPROM_ADDR_TILT_ARM + sizeof(int);
+const unsigned long SERVO_EEPROM_SAVE_INTERVAL = 1000; // ms, debounce agar flash EEPROM tidak cepat aus
 
 // ── Struct ────────────────────────────────────────────────────
 struct AutoCommand {
@@ -111,6 +117,10 @@ unsigned long lastAutoSerial = 0;
 unsigned long lastTime       = 0;
 unsigned long lastTaskTime   = 0;
 const unsigned long taskInterval = 20; // 50Hz Control Loop
+
+int lastSavedTiltArm = 180;
+int lastSavedGripper = 180;
+unsigned long lastServoEepromSave = 0;
 
 const byte numChars = 64;
 char receivedChars[numChars];
@@ -409,10 +419,22 @@ void setup() {
     tTKIRI.attach(PIN_TKIRI, true);
     tTKANAN.attach(PIN_TKANAN, false);
 
+    // Muat posisi tiltArm/gripper terakhir dari EEPROM (bukan tengah/180 hardcode)
+    // supaya servo diam di sudut terakhir saat power-on, tidak "kepentok" ke tengah.
+    int savedTiltArm, savedGripper;
+    EEPROM.get(EEPROM_ADDR_TILT_ARM, savedTiltArm);
+    EEPROM.get(EEPROM_ADDR_GRIPPER,  savedGripper);
+    if (savedTiltArm < 0 || savedTiltArm > 360) savedTiltArm = 180; // EEPROM kosong/belum pernah ditulis
+    if (savedGripper < 0 || savedGripper > 360) savedGripper = 180;
+    autoCmd.tiltArm  = savedTiltArm;
+    autoCmd.gripper  = savedGripper;
+    lastSavedTiltArm = savedTiltArm;
+    lastSavedGripper = savedGripper;
+
     servoTiltArm.attach(PIN_TILT_ARM, 500, 2500);
     servoGripper.attach(PIN_GRIPPER,  500, 2500);
-    
-    // FIX 360: Set posisi awal ke titik tengah dengan writeMicroseconds
+
+    // Set posisi awal servo ke posisi terakhir yang tersimpan (bukan titik tengah tetap)
     servoTiltArm.writeMicroseconds(map(autoCmd.tiltArm, 0, 360, 500, 2500));
     servoGripper.writeMicroseconds(map(autoCmd.gripper, 0, 360, 500, 2500));
 
@@ -585,6 +607,19 @@ void loop() {
         // ── Execute Motors ──
         ThrusterOutput out = mixing(autoCmd, effectiveHeave, mixingPitchCorr, mixingRollCorr);
         applyOutput(out, autoCmd);
+
+        // ── Simpan posisi tiltArm/gripper ke EEPROM (debounced, hanya jika berubah) ──
+        if (millis() - lastServoEepromSave >= SERVO_EEPROM_SAVE_INTERVAL) {
+            if (autoCmd.tiltArm != lastSavedTiltArm) {
+                EEPROM.put(EEPROM_ADDR_TILT_ARM, autoCmd.tiltArm);
+                lastSavedTiltArm = autoCmd.tiltArm;
+            }
+            if (autoCmd.gripper != lastSavedGripper) {
+                EEPROM.put(EEPROM_ADDR_GRIPPER, autoCmd.gripper);
+                lastSavedGripper = autoCmd.gripper;
+            }
+            lastServoEepromSave = millis();
+        }
 
         // ── Telemetry Out ──
         Serial.print("P:");  Serial.print(pitch, 1);

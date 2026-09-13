@@ -13,7 +13,9 @@ KENAPA NODE TERPISAH (bukan nempel di GUI dashboard):
       kalau ada masalah rendering di GUI.
 
 DATA YANG DICATAT (semua topic yang sama dipakai rov_dashboard_node.py):
-    /rov/depth          → kedalaman (m)
+    /rov/depth           → kedalaman (m)
+    /rov/depth_setpoint  → setpoint depth-hold dari Teensy (m)
+    /rov/depth_hold_status → status depth-hold: OFF / HOLDING / MANUAL HEAVE
     /rov/imu_euler       → pitch, roll, yaw (derajat, dari Teensy/Mahony AHRS)
     /rov/thruster_pwm    → PWM 6 thruster (DKIRI, TKIRI, BKIRI, DKANAN, TKANAN, BKANAN)
     /rov/servo_data      → posisi servo (tilt arm, gripper)
@@ -76,6 +78,7 @@ CSV_FIELDS = [
     'pwm_dkanan', 'pwm_tkanan', 'pwm_bkanan',
     'servo_tilt_arm', 'servo_gripper',
     'mode', 'qr_data', 'surge_est',
+    'depth_hold_status', 'depth_setpoint_m',
 ]
 
 
@@ -97,6 +100,7 @@ class DataLoggerNode(Node):
             'pwm_dkanan': 1500, 'pwm_tkanan': 1500, 'pwm_bkanan': 1500,
             'servo_tilt_arm': 180, 'servo_gripper': 180,
             'mode': 'UNKNOWN', 'qr_data': '',
+            'depth_hold_status': 'OFF', 'depth_setpoint_m': 0.0,
         }
         self.json_rows = []
         self.row_count = 0
@@ -109,11 +113,13 @@ class DataLoggerNode(Node):
 
         # ── Subscriptions (topic & QoS sama persis dengan node lain) ───────
         self.create_subscription(Float32,         '/rov/depth',        self.depth_cb, SENSOR_QOS)
+        self.create_subscription(Float32,         '/rov/depth_setpoint', self.depth_setpoint_cb, SENSOR_QOS)
         self.create_subscription(Vector3,         '/rov/imu_euler',    self.imu_cb,   SENSOR_QOS)
         self.create_subscription(Int32MultiArray, '/rov/thruster_pwm', self.pwm_cb,   SENSOR_QOS)
         self.create_subscription(Int32MultiArray, '/rov/servo_data',   self.servo_cb, SENSOR_QOS)
         self.create_subscription(String,          '/rov/qr_data',      self.qr_cb,    SENSOR_QOS)
         self.create_subscription(String,          '/rov/system_mode',  self.mode_cb,  RELIABLE_QOS)
+        self.create_subscription(String,          '/rov/depth_hold_status', self.depth_hold_status_cb, RELIABLE_QOS)
 
         # ── Timer sampling (2 Hz) ───────────────────────────────────────────
         self.sample_timer = self.create_timer(SAMPLE_INTERVAL_SEC, self.sample_and_write)
@@ -123,6 +129,12 @@ class DataLoggerNode(Node):
     # ── Callbacks: cuma update state, TIDAK menulis file di sini ───────────
     def depth_cb(self, msg):
         self.latest['depth_m'] = msg.data
+
+    def depth_setpoint_cb(self, msg):
+        self.latest['depth_setpoint_m'] = msg.data
+
+    def depth_hold_status_cb(self, msg):
+        self.latest['depth_hold_status'] = msg.data
 
     def imu_cb(self, msg):
         self.latest['pitch_deg'] = msg.x

@@ -1,9 +1,22 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 import pygame
 import socket
+import time
 from pynput import keyboard
+from std_msgs.msg import String
+
+# Status depth-hold: RELIABLE seperti /rov/system_mode, karena ini status
+# kritis yang jarang berubah tapi wajib sampai ke dashboard/logger — beda
+# dengan data sensor kontinu yang boleh BEST_EFFORT.
+RELIABLE_QOS = QoSProfile(
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.VOLATILE,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=10,
+)
 
 class GamepadNode(Node):
     def __init__(self):
@@ -73,6 +86,13 @@ class GamepadNode(Node):
         self.ROLL_MAX_STEP = 20       # 500/20/20  = 1.25 s
         self.HEAVE_MAX_STEP = 15      # 500/15/20  = 1.67 s
 
+        # --- 5. DEPTH-HOLD RE-LOCK DELAY ---
+        # Jeda antara h_val kembali netral (1500) dan pengiriman depth_hold=1
+        # lagi ke Teensy. Memberi waktu momentum ROV berhenti dulu supaya
+        # setpoint (depthSetpoint = depth saat rising edge, di main.cpp)
+        # tidak meleset karena ROV masih bergerak naik/turun.
+        self.DEPTH_HOLD_RELOCK_DELAY = 0.5   # detik
+
         # State internal filter (jangan diubah manual)
         self.f_r_val = 1500.0
         self.f_h_val = 1500.0
@@ -80,14 +100,33 @@ class GamepadNode(Node):
         self.last_heave_val = 1500
 
         # Depth-hold (toggle B0 / spacebar).
-        # Pada konfigurasi gamepad saat ini, B0 menggunakan button index 5.
-        # Setpoint & PID sepenuhnya ditangani di Teensy (main.cpp).
-        # Node ini hanya mengirim status ON/OFF + heave PWM mentah.
-        self.depth_hold_active = False
+        # Pada konfigurasi gamepad saat ini, B0 menggunakan button index 0.
+        # Setpoint & PID sepenuhnya ditangani di Teensy (main.cpp) lewat
+        # rising-edge detection (depthSetpoint = depth saat depth_hold 0->1).
+        #
+        # depth_hold_wanted = status yang DIINGINKAN operator (dari toggle
+        # B0/spasi). depth_hold_val (dihitung tiap frame, tidak disimpan
+        # sebagai atribut) = status yang BENAR-BENAR dikirim ke Teensy.
+        # Saat heave (h_val, nilai setelah smoothing) tidak netral, kirim
+        # depth_hold_val=0 supaya operator dapat kontrol heave penuh, tanpa
+        # mematikan depth_hold_wanted. Begitu h_val netral lagi selama
+        # DEPTH_HOLD_RELOCK_DELAY detik berturut-turut, kirim depth_hold=1
+        # lagi -> Teensy melihat rising edge baru -> re-lock otomatis.
+        self.depth_hold_wanted = False
         self.prev_depthhold_btn_state = False
+        # None = heave sedang tidak netral / baru saja jadi netral belum
+        # ditandai; selain itu berisi timestamp (time.monotonic()) saat
+        # h_val pertama kali terbaca netral.
+        self.heave_neutral_since = None
 
         # Relevel (re-zero setpoint IMU): tombol B3 / tombol 'r'.
         self.relevel_flag = 0
+
+        # Publisher status depth-hold untuk dashboard/logger. Dihitung dari
+        # depth_hold_wanted + depth_hold_val yang SUDAH ada di node ini,
+        # jadi tidak perlu menunggu echo balik dari Teensy (lebih cepat &
+        # tidak ambigu — lihat catatan di CLAUDE.md).
+        self.status_pub = self.create_publisher(String, '/rov/depth_hold_status', RELIABLE_QOS)
 
         # ROS 2 Timer -> 20 Hz
         self.timer = self.create_timer(0.05, self.control_loop)
@@ -157,9 +196,9 @@ class GamepadNode(Node):
 
         if self.has_gamepad:
             pygame.event.pump()
-            if self.safe_button(8): self.current_mode = 1
-            elif self.safe_button(9): self.current_mode = 2
-            elif self.safe_button(10): self.current_mode = 3
+            if self.safe_button(6): self.current_mode = 1
+            elif self.safe_button(7): self.current_mode = 2
+            elif self.safe_button(8): self.current_mode = 3
 
             # --- AXIS 1 (roll/surge) : deadzone + expo, lalu dihaluskan di bawah
             r_target = self.map_pwm(
@@ -181,7 +220,7 @@ class GamepadNode(Node):
             heave_axis = max(-1.0, min(1.0, trig_down - trig_up))
             h_target = self.map_pwm(heave_axis, expo=self.EXPO_HEAVE)
 
-            depthhold_btn_pressed = self.safe_button(5)
+            depthhold_btn_pressed = self.safe_button(0)
             self.relevel_flag = 1 if self.safe_button(3) else 0
 
             if self.joy.get_numhats() > 0:
@@ -245,11 +284,38 @@ class GamepadNode(Node):
             self.last_heave_val = 1500
 
         # Logika Transmisi
+        # Emergency: matikan keinginan depth-hold & reset timer relock,
+        # supaya keluar dari mode 3 tidak langsung re-lock diam-diam.
+        if self.current_mode == 3:
+            self.depth_hold_wanted = False
+            self.heave_neutral_since = None
+
+        # Toggle B0/spasi (rising edge, bukan status mentah).
         if depthhold_btn_pressed and not self.prev_depthhold_btn_state:
-            self.depth_hold_active = not self.depth_hold_active
+            self.depth_hold_wanted = not self.depth_hold_wanted
         self.prev_depthhold_btn_state = depthhold_btn_pressed
 
-        depth_hold_val = 1 if self.depth_hold_active else 0
+        # Auto-release saat heave dipakai, auto re-lock begitu h_val netral
+        # selama DEPTH_HOLD_RELOCK_DELAY detik (lihat komentar di init).
+        if h_val != 1500:
+            self.heave_neutral_since = None 
+            depth_hold_val = 0
+        else:
+            if self.heave_neutral_since is None:
+                self.heave_neutral_since = time.monotonic()
+            settled = (time.monotonic() - self.heave_neutral_since) >= self.DEPTH_HOLD_RELOCK_DELAY
+            depth_hold_val = 1 if (self.depth_hold_wanted and settled) else 0
+
+        # Status untuk dashboard/logger: 3 kondisi dibedakan tegas supaya
+        # tidak "berkedip" mengikuti depth_hold_val mentah yang naik-turun
+        # tiap kali operator menyentuh heave.
+        if not self.depth_hold_wanted:
+            status_str = 'OFF'
+        elif depth_hold_val == 1:
+            status_str = 'HOLDING'
+        else:
+            status_str = 'MANUAL HEAVE'
+        self.status_pub.publish(String(data=status_str))
 
         data_string = (
             f"{s_val},{y_val},{r_val},{t_val},{h_val},"
@@ -259,7 +325,7 @@ class GamepadNode(Node):
         self.sock.sendto(data_string.encode('utf-8'), (self.JETSON_IP, self.UDP_PORT))
 
         mode_str = "EMERGENCY" if self.current_mode == 3 else ("AUTO" if self.current_mode == 2 else "MANUAL")
-        dh_str = "ON" if self.depth_hold_active else "OFF"
+        dh_str = status_str
 
         # self.get_logger().info(f"[{'GAMEPAD' if self.has_gamepad else 'KEYBOARD'}] Mode:{mode_str} | DepthHold:{dh_str} | {data_string}")
 

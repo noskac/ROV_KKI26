@@ -9,6 +9,8 @@ Modifikasi:
  - Menggunakan fungsi helper `process_image` agar kode tidak duplikat.
 """
 
+import time
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
@@ -56,6 +58,13 @@ class QRScannerNode(Node):
         self.frame_count_cam1 = 0
         self.frame_count_cam2 = 0
         self.last_qr     = ''
+        self.last_qr_time = 0.0
+        # Walau teks QR sama dengan sebelumnya, tetap publish ulang secara
+        # berkala. Tanpa ini, scan ulang QR yang sama (mis. re-verifikasi
+        # target A) tidak mengirim apa pun karena teksnya == last_qr, dan
+        # dashboard tidak bisa membedakan "baru saja discan lagi" dari
+        # "data lama yang masih nempel di layar".
+        self.REPUBLISH_INTERVAL_SEC = 1.0
 
         self.get_logger().info('QR Scanner aktif. QoS: BEST_EFFORT — membaca dari CAM 1 dan CAM 2...')
 
@@ -79,15 +88,21 @@ class QRScannerNode(Node):
             decoded  = decode(gray)
 
             if decoded:
+                now = time.monotonic()
                 for obj in decoded:
                     text = obj.data.decode('utf-8')
-                    # Hanya publish jika teks baru atau berbeda dari sebelumnya
-                    if text != self.last_qr:
+                    is_new_text = text != self.last_qr
+                    # Publish jika teksnya berbeda dari sebelumnya, ATAU
+                    # (teks sama tapi) sudah lewat REPUBLISH_INTERVAL_SEC —
+                    # supaya dashboard tetap dapat sinyal "masih/baru discan"
+                    # meski hasil bacanya sama persis.
+                    if is_new_text or (now - self.last_qr_time) >= self.REPUBLISH_INTERVAL_SEC:
                         self.last_qr = text
-                        
+                        self.last_qr_time = now
+
                         # Kirim raw text ke GUI
                         self.qr_pub.publish(String(data=text))
-                        
+
                         # Log di terminal untuk tahu kamera mana yang membaca
                         self.get_logger().info(f'[{cam_label}] QR Terdeteksi: {text}')
         except Exception:

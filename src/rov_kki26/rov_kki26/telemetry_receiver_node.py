@@ -68,6 +68,7 @@ class TelemetryReceiver(Node):
         # ─── Publishers (semua sensor pakai SENSOR_QOS) ───────────────────────
         self.imu_pub   = self.create_publisher(Vector3,         '/rov/imu_euler',   SENSOR_QOS)
         self.depth_pub = self.create_publisher(Float32,         '/rov/depth',       SENSOR_QOS)
+        self.depth_setpoint_pub = self.create_publisher(Float32,'/rov/depth_setpoint', SENSOR_QOS)
         self.pwm_pub   = self.create_publisher(Int32MultiArray, '/rov/thruster_pwm',SENSOR_QOS)
         self.servo_pub = self.create_publisher(Int32MultiArray, '/rov/servo_data',  SENSOR_QOS)
         self.mode_pub  = self.create_publisher(String,          '/rov/system_mode', RELIABLE_QOS)
@@ -140,20 +141,26 @@ class TelemetryReceiver(Node):
         except Exception:
             return
 
-        # ── 1. Data Sensor: "P:12.5 R:-3.2 Y:45.0 D:1.23" ──────────────────
+        # ── 1. Data Sensor: "P:12.5 R:-3.2 Y:45.0 D:1.23 ... SPD:1.230 ..." ──
         if msg_str.startswith('P:'):
             imu = Vector3()
             depth_val = 0.0
+            setpoint_val = 0.0
             for token in msg_str.split():
                 try:
                     if token.startswith('P:'): imu.x   = float(token[2:])
                     elif token.startswith('R:'): imu.y  = float(token[2:])
                     elif token.startswith('Y:'): imu.z  = float(token[2:])
                     elif token.startswith('D:'): depth_val = float(token[2:])
+                    # SPD: = depthSetpoint yang dikunci Teensy saat rising-edge
+                    # depth_hold (lihat main.cpp). Token 'SPD:' tidak pernah
+                    # tertangkap oleh cek 'D:' di atas karena diawali huruf 'S'.
+                    elif token.startswith('SPD:'): setpoint_val = float(token[4:])
                 except ValueError:
                     pass
             self.imu_pub.publish(imu)
             self.depth_pub.publish(Float32(data=depth_val))
+            self.depth_setpoint_pub.publish(Float32(data=setpoint_val))
 
         # ── 2. Data PWM: "PWM DKIRI:1500 DKANAN:1500 ..." ───────────────────
         elif msg_str.startswith('PWM'):

@@ -27,6 +27,7 @@ FIX dari versi lama:
 
 import sys
 import os
+import time
 import cv2
 import numpy as np
 import datetime
@@ -79,6 +80,8 @@ class Ros2Worker(QThread):
     sig_qr    = pyqtSignal(str)
     sig_imu   = pyqtSignal(float, float, float)
     sig_depth = pyqtSignal(float)
+    sig_depth_setpoint     = pyqtSignal(float)
+    sig_depth_hold_status  = pyqtSignal(str)
     sig_pwm   = pyqtSignal(list)
     sig_mode  = pyqtSignal(str)
     sig_servo = pyqtSignal(list)
@@ -97,12 +100,14 @@ class Ros2Worker(QThread):
         self.node.create_subscription(RosImage,         '/rov/cam2/image_raw',  self.cam2_cb,  SENSOR_QOS)
         self.node.create_subscription(Vector3,          '/rov/imu_euler',       self.imu_cb,   SENSOR_QOS)
         self.node.create_subscription(Float32,          '/rov/depth',           self.depth_cb, SENSOR_QOS)
+        self.node.create_subscription(Float32,          '/rov/depth_setpoint',  self.depth_setpoint_cb, SENSOR_QOS)
         self.node.create_subscription(Int32MultiArray,  '/rov/thruster_pwm',    self.pwm_cb,   SENSOR_QOS)
         self.node.create_subscription(Int32MultiArray,  '/rov/servo_data',      self.servo_cb, SENSOR_QOS)
         # ── QR data dikategorikan sensor (ringan, tidak butuh RELIABLE)
         self.node.create_subscription(String,           '/rov/qr_data',         self.qr_cb,    SENSOR_QOS)
-        # ── Mode system: RELIABLE karena jarang tapi penting
+        # ── Mode system & status depth-hold: RELIABLE karena jarang tapi penting
         self.node.create_subscription(String,           '/rov/system_mode',     self.mode_cb,  RELIABLE_QOS)
+        self.node.create_subscription(String,           '/rov/depth_hold_status', self.depth_hold_status_cb, RELIABLE_QOS)
 
         # ── FIX: Pakai spin loop dengan cek isInterruptionRequested()
         #    agar bisa shutdown bersih lewat requestInterruption()
@@ -134,6 +139,8 @@ class Ros2Worker(QThread):
     def qr_cb(self, msg):      self.sig_qr.emit(msg.data)
     def imu_cb(self, msg):     self.sig_imu.emit(msg.x, msg.y, msg.z)
     def depth_cb(self, msg):   self.sig_depth.emit(msg.data)
+    def depth_setpoint_cb(self, msg):      self.sig_depth_setpoint.emit(msg.data)
+    def depth_hold_status_cb(self, msg):   self.sig_depth_hold_status.emit(msg.data)
     def mode_cb(self, msg):    self.sig_mode.emit(msg.data)
 
     def pwm_cb(self, msg):
@@ -175,6 +182,12 @@ class MainWindow(QMainWindow):
         self.latest_pitch = 0.0
         self.latest_roll  = 0.0
         self.latest_yaw   = 0.0
+
+        # Waktu (monotonic) pesan /rov/qr_data terakhir diterima. Dipakai
+        # untuk menampilkan "N detik lalu" dan mem-flash label, agar operator
+        # bisa membedakan scan QR yang baru saja terjadi dari data lama yang
+        # kebetulan isinya sama (mis. scan ulang QR "A").
+        self.last_qr_recv_time = None
 
         self.render_timer = QTimer(self)
         self.render_timer.timeout.connect(self.update_3d_render)
@@ -276,6 +289,14 @@ class MainWindow(QMainWindow):
         self.lbl_depth.setStyleSheet('color: cyan; border: none;')
         self.lbl_depth.setAlignment(Qt.AlignCenter)
 
+        # Setpoint depth-hold (dari Teensy, via /rov/depth_setpoint). Hanya
+        # relevan saat status HOLDING/MANUAL HEAVE, tapi tetap ditampilkan
+        # apa adanya (nilai terakhir) supaya sederhana.
+        self.lbl_depth_setpoint = QLabel('SP: -- m')
+        self.lbl_depth_setpoint.setFont(QFont('Courier', 10, QFont.Bold))
+        self.lbl_depth_setpoint.setStyleSheet('color: #888888; border: none;')
+        self.lbl_depth_setpoint.setAlignment(Qt.AlignCenter)
+
         imu_lay = QHBoxLayout()
         self.lbl_pitch = QLabel('P: 0.0°')
         self.lbl_roll  = QLabel('R: 0.0°')
@@ -291,6 +312,7 @@ class MainWindow(QMainWindow):
 
         hud_lay.addWidget(self.lbl_alt_title)
         hud_lay.addWidget(self.lbl_depth)
+        hud_lay.addWidget(self.lbl_depth_setpoint)
         hud_lay.addLayout(imu_lay)
         hud_lay.addWidget(self.lbl_qr_data, alignment=Qt.AlignCenter)
         hud_lay.addWidget(self.lbl_qr_stat, alignment=Qt.AlignCenter)
@@ -399,9 +421,9 @@ class MainWindow(QMainWindow):
                 actor = actors.GetNextActor()
                 if actor:
                     offset_x = 0
-                    offset_y = 0    
+                    offset_y = 90  # Offset dasar agar model selalu menghadap ke depan saat pitch/roll/yaw = 0
                     offset_z = 0
-                    
+
                     # --- MAPPING SUMBU IMU ---
                     # Roll & Pitch ditukar ke sumbu X/Z (sesuai kalibrasi visual:
                     # sebelumnya roll di sumbu X malah terlihat seperti gerakan pitch).
@@ -508,6 +530,8 @@ class MainWindow(QMainWindow):
         self.ros_worker.sig_qr.connect(self.update_qr)
         self.ros_worker.sig_imu.connect(self.update_imu)
         self.ros_worker.sig_depth.connect(self.update_depth)
+        self.ros_worker.sig_depth_setpoint.connect(self.update_depth_setpoint)
+        self.ros_worker.sig_depth_hold_status.connect(self.update_depth_hold_status)
         self.ros_worker.sig_pwm.connect(self.update_pwm)
         self.ros_worker.sig_mode.connect(self.update_mode)
         self.ros_worker.sig_servo.connect(self.update_servo)
@@ -515,6 +539,7 @@ class MainWindow(QMainWindow):
     # ── Update callbacks (dipanggil di Qt main thread via signals) ────────────
     def update_clock(self):
         self.lbl_time.setText(datetime.datetime.now().strftime('%A, %d-%m-%Y %H:%M:%S'))
+        self.refresh_qr_freshness()
 
     def cv2_to_qpixmap(self, cv_img):
         rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
@@ -524,12 +549,39 @@ class MainWindow(QMainWindow):
     def update_cam1(self, cv_img): self.lbl_cam1.setPixmap(self.cv2_to_qpixmap(cv_img))
     def update_cam2(self, cv_img): self.lbl_cam2.setPixmap(self.cv2_to_qpixmap(cv_img))
 
+    QR_LABEL_BASE = 'font-family: Courier; font-weight: bold; font-size: 11pt; border:none;'
+
     def update_qr(self, text):
+        # qr_scanner_node.py sekarang mem-publish ulang teks yang sama setiap
+        # ~1 detik selama masih terbaca kamera, bukan cuma sekali per teks
+        # baru — jadi tiap pesan yang sampai di sini memang scan baru, walau
+        # isinya identik dengan scan sebelumnya (mis. re-verifikasi QR "A").
         if text not in ('Menunggu...', 'Belum terdeteksi'):
             self.lbl_qr_data.setText(f'Data : {text}')
-            self.lbl_qr_data.setStyleSheet('color: white; border: none;')
-            self.lbl_qr_stat.setText('Stat : Valid')
-            self.lbl_qr_stat.setStyleSheet('color: #00ff00; border: none;')
+            self.last_qr_recv_time = time.monotonic()
+
+            # Flash sesaat supaya kelihatan jelas bahwa ini deteksi baru,
+            # bukan teks lama yang masih nempel di layar.
+            flash_style  = f'color: black; background-color: #00ff00; {self.QR_LABEL_BASE}'
+            normal_style = f'color: white; {self.QR_LABEL_BASE}'
+            self.lbl_qr_data.setStyleSheet(flash_style)
+            QTimer.singleShot(300, lambda: self.lbl_qr_data.setStyleSheet(normal_style))
+
+            self.refresh_qr_freshness()
+
+    def refresh_qr_freshness(self):
+        """Perbarui label Stat QR (dipanggil tiap detik dari update_clock)."""
+        if self.last_qr_recv_time is None:
+            return
+        elapsed = time.monotonic() - self.last_qr_recv_time
+        self.lbl_qr_stat.setText(f'Stat : Valid ({elapsed:.0f}s lalu)')
+        if elapsed < 3.0:
+            # Baru saja discan / masih aktif terbaca kamera.
+            color = '#00ff00'
+        else:
+            # Sudah lebih dari 3 detik tanpa deteksi baru — data mulai basi.
+            color = '#888888'
+        self.lbl_qr_stat.setStyleSheet(f'color: {color}; {self.QR_LABEL_BASE}')
 
     def update_depth(self, val): self.lbl_depth.setText(f'{val:.2f} m')
 
@@ -609,14 +661,27 @@ class MainWindow(QMainWindow):
             )
             self.btn_emergency.setText('⚠ EMERGENCY STOP ⚠')
 
-        if 'LOCK' in mode.upper():
+    def update_depth_hold_status(self, status):
+        # Sumber kebenaran status depth-hold adalah /rov/depth_hold_status
+        # (dari mavis_gamepad_node.py), BUKAN string /rov/system_mode —
+        # field depth_hold terpisah dari mode dan tidak pernah ikut di
+        # string MODE:. Tiga kondisi dibedakan tegas (lihat CLAUDE.md)
+        # supaya indikator tidak berkedip mengikuti auto-release heave.
+        if status == 'HOLDING':
             self.lbl_alt_title.setText('ALTITUDE (LOCKED)')
             self.lbl_alt_title.setStyleSheet('color: #00ff00; font-weight: bold; border: none;')
             self.lbl_depth.setStyleSheet('color: #00ff00; border: none;')
-        else:
+        elif status == 'MANUAL HEAVE':
+            self.lbl_alt_title.setText('ALTITUDE (MANUAL)')
+            self.lbl_alt_title.setStyleSheet('color: #ffaa00; font-weight: bold; border: none;')
+            self.lbl_depth.setStyleSheet('color: #ffaa00; border: none;')
+        else:  # 'OFF'
             self.lbl_alt_title.setText('ALTITUDE')
             self.lbl_alt_title.setStyleSheet('color: #888888; font-weight: bold; border: none;')
             self.lbl_depth.setStyleSheet('color: cyan; border: none;')
+
+    def update_depth_setpoint(self, val):
+        self.lbl_depth_setpoint.setText(f'SP: {val:.2f} m')
 
     def toggle_emergency(self):
         cmd = b'GUI_EMERGENCY_ON' if not self.emergency_active else b'GUI_EMERGENCY_OFF'
