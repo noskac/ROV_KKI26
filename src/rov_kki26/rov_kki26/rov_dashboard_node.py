@@ -32,10 +32,12 @@ import cv2
 import numpy as np
 import datetime
 import socket
+import queue
 import subprocess
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QLabel,
-                             QVBoxLayout, QHBoxLayout, QGridLayout, QFrame, QPushButton)
+                             QVBoxLayout, QHBoxLayout, QGridLayout, QFrame, QPushButton,
+                             QDoubleSpinBox, QScrollArea)
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer
 import math
 from PyQt5.QtGui import QImage, QPixmap, QFont, QPainter, QPen, QColor, QPolygonF, QBrush
@@ -51,8 +53,10 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPo
 
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image as RosImage
-from std_msgs.msg import String, Int32MultiArray, Float32
+from std_msgs.msg import String, Int32MultiArray, Float32, Empty
 from geometry_msgs.msg import Vector3
+
+from rov_kki26.auto_mission import AUTO_TARGET_MAX, AUTO_TARGET_MIN
 
 # ─── QoS Profiles ─────────────────────────────────────────────────────────────
 # Harus IDENTIK dengan yang dipakai publisher di telemetry/video_receiver
@@ -85,11 +89,22 @@ class Ros2Worker(QThread):
     sig_pwm   = pyqtSignal(list)
     sig_mode  = pyqtSignal(str)
     sig_servo = pyqtSignal(list)
+    sig_auto_status     = pyqtSignal(str)
+    sig_auto_setpoint   = pyqtSignal(float)
+    sig_depth_rel       = pyqtSignal(float)
+    sig_auto_zero_value = pyqtSignal(float)
 
     def __init__(self):
         super().__init__()
         self.node   = None
         self.bridge = CvBridge()
+        # Permintaan publish dari thread GUI (tombol panel mode auto).
+        # queue.Queue thread-safe secara desain -- GUI cukup put(), loop
+        # spin di run() yang men-drain lalu benar-benar memanggil publish(),
+        # supaya publish() SELALU terjadi di thread executor (lihat pola
+        # yang sama di telemetry_receiver_node.py: I/O thread hanya menaruh
+        # ke queue, timer/loop di thread ROS yang men-drain & publish).
+        self.outbox = queue.Queue()
 
     def run(self):
         rclpy.init()
@@ -109,6 +124,20 @@ class Ros2Worker(QThread):
         self.node.create_subscription(String,           '/rov/system_mode',     self.mode_cb,  RELIABLE_QOS)
         self.node.create_subscription(String,           '/rov/depth_hold_status', self.depth_hold_status_cb, RELIABLE_QOS)
 
+        # ── Panel mode auto (dipublish mavis_gamepad_node.py) ──────────────────
+        self.node.create_subscription(String,  '/rov/auto_status',     self.auto_status_cb,     RELIABLE_QOS)
+        self.node.create_subscription(Float32, '/rov/auto_setpoint',   self.auto_setpoint_cb,   SENSOR_QOS)
+        self.node.create_subscription(Float32, '/rov/depth_rel',       self.depth_rel_cb,       SENSOR_QOS)
+        self.node.create_subscription(Float32, '/rov/auto_zero_value', self.auto_zero_value_cb, RELIABLE_QOS)
+
+        # ── Publisher perintah panel mode auto (lihat self.outbox) ─────────────
+        self.auto_target_pub = self.node.create_publisher(
+            Float32, '/rov/auto_target_cmd', RELIABLE_QOS)
+        self.auto_zero_pub = self.node.create_publisher(
+            Empty, '/rov/auto_zero_cmd', RELIABLE_QOS)
+        self.auto_abort_pub = self.node.create_publisher(
+            Empty, '/rov/auto_abort_cmd', RELIABLE_QOS)
+
         # ── FIX: Pakai spin loop dengan cek isInterruptionRequested()
         #    agar bisa shutdown bersih lewat requestInterruption()
         executor = SingleThreadedExecutor()
@@ -116,6 +145,7 @@ class Ros2Worker(QThread):
 
         while rclpy.ok() and not self.isInterruptionRequested():
             executor.spin_once(timeout_sec=0.05)  # 50ms timeout → 20Hz event check
+            self._drain_outbox()
 
         # Cleanup bersih (tidak pernah terjadi di versi lama karena terminate())
         self.node.destroy_node()
@@ -151,6 +181,37 @@ class Ros2Worker(QThread):
         if len(msg.data) >= 2:
             self.sig_servo.emit(list(msg.data))
 
+    def auto_status_cb(self, msg):       self.sig_auto_status.emit(msg.data)
+    def auto_setpoint_cb(self, msg):     self.sig_auto_setpoint.emit(msg.data)
+    def depth_rel_cb(self, msg):         self.sig_depth_rel.emit(msg.data)
+    def auto_zero_value_cb(self, msg):   self.sig_auto_zero_value.emit(msg.data)
+
+    # ── Drain outbox (dipanggil dari thread ROS/executor, lihat run()) ────────
+    def _drain_outbox(self):
+        while not self.outbox.empty():
+            try:
+                action, payload = self.outbox.get_nowait()
+            except queue.Empty:
+                break
+            if action == 'auto_target':
+                self.auto_target_pub.publish(Float32(data=payload))
+            elif action == 'auto_zero':
+                self.auto_zero_pub.publish(Empty())
+            elif action == 'auto_abort':
+                self.auto_abort_pub.publish(Empty())
+
+    # ── Dipanggil dari thread GUI (klik tombol panel mode auto). Hanya
+    #    menaruh ke queue.Queue (thread-safe), TIDAK memanggil publish()
+    #    langsung -- lihat _drain_outbox() dan catatan threading di atas.
+    def request_auto_target(self, value):
+        self.outbox.put(('auto_target', value))
+
+    def request_auto_zero(self):
+        self.outbox.put(('auto_zero', None))
+
+    def request_auto_abort(self):
+        self.outbox.put(('auto_abort', None))
+
 
 # ==========================================
 # 2. KELAS JENDELA UTAMA GUI (PyQt5)
@@ -167,13 +228,36 @@ class MainWindow(QMainWindow):
         self.emergency_active = False
 
         self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
+
+        # Dibungkus QScrollArea (bukan setCentralWidget(central_widget)
+        # langsung) semata sebagai jaring pengaman: kalau tinggi total
+        # konten (baris lama + panel mode auto baru) melebihi tinggi layar
+        # di laptop lomba, operator masih bisa scroll alih-alih footer/panel
+        # terpotong hilang di luar layar. Tidak mengubah ukuran, posisi,
+        # atau stylesheet widget/layout lama SAMA SEKALI -- central_widget
+        # dan main_layout tetap persis sama seperti sebelumnya.
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(self.central_widget)
+        scroll_area.setStyleSheet('QScrollArea { border: none; background-color: #1e1e1e; }')
+        self.setCentralWidget(scroll_area)
 
         self.setup_top_bar()
         self.setup_camera_row()
         self.setup_telemetry_row()
+        self.setup_auto_panel()
         self.setup_footer()
+
+        # State panel mode auto (lihat setup_auto_panel). auto_target_applied
+        # HANYA true setelah tombol Terapkan ditekan minimal sekali di sesi
+        # GUI ini -- mencerminkan pending_target di mavis_gamepad_node.py
+        # yang juga tidak pernah balik ke None setelah pertama diisi.
+        self.auto_target_applied = False
+        # Timestamp (monotonic) mulai misi auto, disimpulkan LOKAL dari
+        # transisi status /rov/auto_status (tidak ada topic "elapsed" dari
+        # backend) -- lihat update_auto_status().
+        self.auto_mission_start_time = None
 
         self.clock_timer = QTimer(self)
         self.clock_timer.timeout.connect(self.update_clock)
@@ -412,6 +496,124 @@ class MainWindow(QMainWindow):
         telemetry_layout.addWidget(right_frame, stretch=1)
         self.main_layout.addLayout(telemetry_layout)
 
+    # ── Panel MODE AUTO (baris baru, berdiri sendiri) ─────────────────────────
+    # Ditaruh sebagai baris TERPISAH antara telemetry_row dan footer -- bukan
+    # disisipkan ke hud_frame/thruster_frame/map_frame/model_frame yang sudah
+    # ada -- supaya tidak ada widget/stylesheet lama yang tersentuh sama
+    # sekali. Satu-satunya efek samping: viewport 3D VTK (satu-satunya widget
+    # ber-size-policy Expanding di layout) tampil sedikit lebih pendek karena
+    # Qt otomatis membagi ulang sisa tinggi jendela -- bukan perubahan kode.
+    def setup_auto_panel(self):
+        # SATU baris ringkas (tinggi ~setara top_bar) -- sengaja TIDAK
+        # menumpuk widget vertikal per kolom seperti draft pertama, karena
+        # itu membuat tinggi total window melebihi tinggi layar dan footer
+        # ikut terpotong di luar layar (lihat laporan screenshot). Semua
+        # info tetap ada, hanya disusun mendatar & font/padding dikecilkan.
+        auto_frame = QFrame()
+        auto_frame.setStyleSheet('background-color: #2d2d2d; border: 1px solid #555555;')
+        auto_frame.setMaximumHeight(64)
+        auto_layout = QHBoxLayout(auto_frame)
+        auto_layout.setContentsMargins(8, 4, 8, 4)
+        auto_layout.setSpacing(10)
+
+        title_lbl = QLabel('MODE AUTO')
+        title_lbl.setFont(QFont('Courier', 10, QFont.Bold))
+        title_lbl.setStyleSheet('border: none;')
+
+        # -- Target + tombol kontrol (mendatar) --------------------------
+        target_lbl = QLabel('Target Auto (m):')
+        target_lbl.setStyleSheet('border: none; font-size: 9pt;')
+        self.auto_target_spin = QDoubleSpinBox()
+        self.auto_target_spin.setRange(AUTO_TARGET_MIN, AUTO_TARGET_MAX)
+        self.auto_target_spin.setSingleStep(0.05)
+        self.auto_target_spin.setDecimals(2)
+        self.auto_target_spin.setValue(AUTO_TARGET_MIN)
+        self.auto_target_spin.setMaximumWidth(70)
+        self._auto_spin_style_unset = (
+            'background-color: #333; color: #888888; '
+            'border: 1px solid #555; padding: 2px;'
+        )
+        self._auto_spin_style_set = (
+            'background-color: #333; color: white; '
+            'border: 1px solid #00ff00; padding: 2px;'
+        )
+        self.auto_target_spin.setStyleSheet(self._auto_spin_style_unset)
+
+        self._auto_apply_style_normal = (
+            'background-color: #005f99; color: white; padding: 4px 8px; border-radius: 4px;'
+        )
+        self._auto_apply_style_flash = (
+            'background-color: #00aa00; color: white; padding: 4px 8px; border-radius: 4px;'
+        )
+        self.btn_auto_apply = QPushButton('Terapkan')
+        self.btn_auto_apply.setStyleSheet(self._auto_apply_style_normal)
+        self.btn_auto_apply.clicked.connect(self.apply_auto_target)
+
+        self._auto_zero_style_normal = (
+            'background-color: #444; color: white; padding: 4px 8px; border-radius: 4px;'
+        )
+        self._auto_zero_style_flash = (
+            'background-color: #00aa00; color: white; padding: 4px 8px; border-radius: 4px;'
+        )
+        self.btn_auto_zero = QPushButton('Tandai Permukaan')
+        self.btn_auto_zero.setStyleSheet(self._auto_zero_style_normal)
+        self.btn_auto_zero.clicked.connect(self.mark_surface_zero)
+
+        self.lbl_auto_zero_value = QLabel('Zero: -- m')
+        self.lbl_auto_zero_value.setStyleSheet('color: #888888; border: none; font-size: 9pt;')
+
+        # -- Status misi (satu baris, label pendek berdampingan) ---------
+        self.lbl_auto_target_locked = QLabel('TARGET BELUM DISET')
+        self.lbl_auto_target_locked.setStyleSheet(
+            'color: #ff4444; font-weight: bold; border: none; font-size: 9pt;')
+        self.lbl_auto_state = QLabel('STATE: IDLE')
+        self.lbl_auto_state.setStyleSheet(
+            'color: #888888; font-weight: bold; border: none; font-size: 9pt;')
+        self.lbl_auto_setpoint = QLabel('SP: -- m')
+        self.lbl_auto_setpoint.setStyleSheet('color: #888888; border: none; font-size: 9pt;')
+        self.lbl_auto_depth_rel_text = QLabel('Depth rel: -- m')
+        self.lbl_auto_depth_rel_text.setStyleSheet('color: #888888; border: none; font-size: 9pt;')
+        self.lbl_auto_elapsed = QLabel('Elapsed: -- s')
+        self.lbl_auto_elapsed.setStyleSheet('color: #888888; border: none; font-size: 9pt;')
+        # Kosong ("") saat tidak terminal supaya tidak makan lebar baris --
+        # QLabel kosong menyusut ke lebar minimal. Diisi oleh
+        # update_auto_status() saat ABORTED/FAILED/ARM_REJECTED.
+        self.lbl_auto_reason = QLabel('')
+        self.lbl_auto_reason.setStyleSheet('color: #ff4444; border: none; font-size: 9pt;')
+
+        # -- Readout besar depth_rel + depth mentah (satu baris) ---------
+        self.lbl_depth_rel_big = QLabel('-- m')
+        self.lbl_depth_rel_big.setFont(QFont('Courier', 22, QFont.Bold))
+        self.lbl_depth_rel_big.setStyleSheet('color: #888888; border: none;')
+        raw_tag = QLabel('mentah:')
+        raw_tag.setStyleSheet('color: #888888; border: none; font-size: 8pt;')
+        self.lbl_raw_depth_mini = QLabel('0.00 m')
+        self.lbl_raw_depth_mini.setStyleSheet('color: #888888; border: none; font-size: 9pt;')
+
+        # -- ABORT ---------------------------------------------------------
+        self.btn_auto_abort = QPushButton('ABORT (mode 1)')
+        self.btn_auto_abort.setFont(QFont('Courier', 10, QFont.Bold))
+        self.btn_auto_abort.setStyleSheet(
+            'background-color: #cc3300; color: white; padding: 6px 10px; border-radius: 6px;'
+        )
+        self.btn_auto_abort.clicked.connect(self.send_auto_abort)
+
+        for w in (title_lbl, target_lbl, self.auto_target_spin, self.btn_auto_apply,
+                  self.btn_auto_zero, self.lbl_auto_zero_value):
+            auto_layout.addWidget(w)
+        auto_layout.addSpacing(6)
+        for w in (self.lbl_auto_state, self.lbl_auto_target_locked,
+                  self.lbl_auto_setpoint, self.lbl_auto_depth_rel_text,
+                  self.lbl_auto_elapsed, self.lbl_auto_reason):
+            auto_layout.addWidget(w)
+        auto_layout.addStretch()
+        auto_layout.addWidget(self.lbl_depth_rel_big)
+        auto_layout.addWidget(raw_tag)
+        auto_layout.addWidget(self.lbl_raw_depth_mini)
+        auto_layout.addWidget(self.btn_auto_abort)
+
+        self.main_layout.addWidget(auto_frame)
+
     def update_3d_render(self):
         # 1. --- UPDATE PENGGAMBARAN 3D MODEL ---
         if hasattr(self, 'importer'):
@@ -535,11 +737,20 @@ class MainWindow(QMainWindow):
         self.ros_worker.sig_pwm.connect(self.update_pwm)
         self.ros_worker.sig_mode.connect(self.update_mode)
         self.ros_worker.sig_servo.connect(self.update_servo)
+        self.ros_worker.sig_auto_status.connect(self.update_auto_status)
+        self.ros_worker.sig_auto_setpoint.connect(self.update_auto_setpoint)
+        self.ros_worker.sig_depth_rel.connect(self.update_depth_rel)
+        self.ros_worker.sig_auto_zero_value.connect(self.update_auto_zero_value)
+        # sig_depth SUDAH terhubung ke update_depth (HUD altitude, tidak
+        # disentuh) -- disambungkan LAGI ke slot baru murni utk label
+        # "mentah" kecil di panel auto. Qt mendukung banyak slot per sinyal.
+        self.ros_worker.sig_depth.connect(self.update_raw_depth_mini)
 
     # ── Update callbacks (dipanggil di Qt main thread via signals) ────────────
     def update_clock(self):
         self.lbl_time.setText(datetime.datetime.now().strftime('%A, %d-%m-%Y %H:%M:%S'))
         self.refresh_qr_freshness()
+        self.refresh_auto_elapsed()
 
     def cv2_to_qpixmap(self, cv_img):
         rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
@@ -682,6 +893,109 @@ class MainWindow(QMainWindow):
 
     def update_depth_setpoint(self, val):
         self.lbl_depth_setpoint.setText(f'SP: {val:.2f} m')
+
+    # ── Panel MODE AUTO: slot (dari sinyal ROS) ───────────────────────────────
+    # Pola identik update_depth_hold_status: subscription RELIABLE/SENSOR_QOS
+    # -> pyqtSignal -> slot di sini yang mengubah text & stylesheet. Tidak
+    # ada panggilan widget Qt dari thread ROS di mana pun.
+    _AUTO_ACTIVE_STATES = ('ZEROING', 'DESCEND', 'HOLD', 'ASCEND', 'SURFACED')
+
+    def update_auto_status(self, status_str):
+        self.lbl_auto_state.setText(f'STATE: {status_str}')
+        base_state = status_str.split(':', 1)[0].strip()
+
+        if base_state.startswith('ARMING'):
+            color = '#ffaa00'   # oranye transisi (menahan tombol arm)
+        elif base_state == 'IDLE':
+            color = '#888888'   # abu-abu idle
+        elif base_state in ('ABORTED', 'FAILED', 'ARM_REJECTED'):
+            color = '#ff4444'   # merah gagal/abort
+        else:
+            # ZEROING/DESCEND/HOLD/ASCEND/SURFACED/DONE -> aktif/berhasil
+            color = '#00ff00'
+        self.lbl_auto_state.setStyleSheet(
+            f'color: {color}; font-weight: bold; border: none; font-size: 9pt;')
+        self.lbl_depth_rel_big.setStyleSheet(f'color: {color}; border: none;')
+
+        # "Elapsed" tidak dipublish backend -- disimpulkan lokal dari
+        # transisi status (lihat refresh_auto_elapsed).
+        if base_state in self._AUTO_ACTIVE_STATES:
+            if self.auto_mission_start_time is None:
+                self.auto_mission_start_time = time.monotonic()
+        else:
+            self.auto_mission_start_time = None
+
+        if base_state in ('ABORTED', 'FAILED', 'ARM_REJECTED') and ':' in status_str:
+            reason_text = status_str.split(':', 1)[1].strip()
+            self.lbl_auto_reason.setText(f'Reason: {reason_text}')
+            self.lbl_auto_reason.setStyleSheet('color: #ff4444; border: none; font-size: 9pt;')
+        else:
+            # Kosong (bukan hanya diabaikan) supaya QLabel menyusut ke lebar
+            # minimal dan tidak makan tempat di baris tunggal yang padat.
+            self.lbl_auto_reason.setText('')
+
+    def update_auto_setpoint(self, val):
+        self.lbl_auto_setpoint.setText(f'Setpoint: {val:.2f} m')
+
+    def update_depth_rel(self, val):
+        if math.isnan(val):
+            self.lbl_auto_depth_rel_text.setText('Depth rel: -- m')
+            self.lbl_depth_rel_big.setText('-- m')
+        else:
+            self.lbl_auto_depth_rel_text.setText(f'Depth rel: {val:.2f} m')
+            self.lbl_depth_rel_big.setText(f'{val:.2f} m')
+
+    def update_auto_zero_value(self, val):
+        self.lbl_auto_zero_value.setText(f'Zero: {val:.2f} m')
+        self.lbl_auto_zero_value.setStyleSheet('color: #888888; border: none; font-size: 9pt;')
+
+    def update_raw_depth_mini(self, val):
+        self.lbl_raw_depth_mini.setText(f'{val:.2f} m')
+
+    def refresh_auto_elapsed(self):
+        """Perbarui label Elapsed (dipanggil tiap detik dari update_clock)."""
+        if self.auto_mission_start_time is None:
+            self.lbl_auto_elapsed.setText('Elapsed: -- s')
+        else:
+            elapsed = time.monotonic() - self.auto_mission_start_time
+            self.lbl_auto_elapsed.setText(f'Elapsed: {elapsed:.0f} s')
+
+    # ── Panel MODE AUTO: aksi tombol (thread GUI) ─────────────────────────────
+    def apply_auto_target(self):
+        value = self.auto_target_spin.value()
+        self.ros_worker.request_auto_target(value)
+        self.auto_target_applied = True
+
+        self.lbl_auto_target_locked.setText(f'Target: {value:.2f} m')
+        self.lbl_auto_target_locked.setStyleSheet(
+            'color: white; font-weight: bold; border: none; font-size: 9pt;')
+        self.auto_target_spin.setStyleSheet(self._auto_spin_style_set)
+
+        # Feedback visual sesaat di tombol (pola sama seperti flash QR baru).
+        self.btn_auto_apply.setStyleSheet(self._auto_apply_style_flash)
+        QTimer.singleShot(400, self._reset_auto_apply_style)
+
+    def _reset_auto_apply_style(self):
+        self.btn_auto_apply.setStyleSheet(self._auto_apply_style_normal)
+
+    def mark_surface_zero(self):
+        self.ros_worker.request_auto_zero()
+
+        # Feedback visual SESAAT (pola sama seperti Terapkan) supaya klik
+        # tidak terasa "tidak berefek" -- backend butuh AUTO_ZERO_DURATION
+        # (2 detik) untuk mengumpulkan sampel sebelum /rov/auto_zero_value
+        # benar-benar terbit (lihat mavis_gamepad_node.py), dan tanpa
+        # penanda ini nilai bisa tampak diam kalau depth kebetulan sama.
+        self.btn_auto_zero.setStyleSheet(self._auto_zero_style_flash)
+        QTimer.singleShot(400, self._reset_auto_zero_style)
+        self.lbl_auto_zero_value.setText('Zero: mengukur...')
+        self.lbl_auto_zero_value.setStyleSheet('color: #ffaa00; border: none; font-size: 9pt;')
+
+    def _reset_auto_zero_style(self):
+        self.btn_auto_zero.setStyleSheet(self._auto_zero_style_normal)
+
+    def send_auto_abort(self):
+        self.ros_worker.request_auto_abort()
 
     def toggle_emergency(self):
         cmd = b'GUI_EMERGENCY_ON' if not self.emergency_active else b'GUI_EMERGENCY_OFF'

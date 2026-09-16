@@ -19,7 +19,7 @@ ROS 2 distro: **Jazzy**. Package build type: `ament_python`.
 ```bash
 # Build (from workspace root)
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-select rov_kki26
+colcon build --packages-select rov_kki26 --symlink-install
 source install/setup.bash
 
 # Run the full GCS stack (opens one gnome-terminal per node)
@@ -63,6 +63,8 @@ pytest src/rov_kki26/test/test_copyright.py
 ```
 
 `build/`, `install/`, and `log/` are colcon-generated output and currently present in the working tree — don't hand-edit files under them; regenerate with `colcon build`.
+
+`--symlink-install` symlinks `install/` back to the Python sources instead of copying them, so editing tuning constants (e.g. `rov_kki26/auto_mission.py`'s `AUTO_*` block) only needs a node restart, not a rebuild. Since the tree previously had a non-symlinked `install/`/`build/` from plain `colcon build`, the **first** switch to `--symlink-install` must delete both directories first (`rm -rf build install`) — mixing symlinked and copied artifacts in the same `install/` tree causes stale-module bugs that are hard to diagnose (edits silently not taking effect).
 
 ## Architecture
 
